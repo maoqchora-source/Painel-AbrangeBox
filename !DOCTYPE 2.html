@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AbrangeBox - Painel do Equipamento</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Poppins', 'Inter', sans-serif; }
+        body { background-color: #f1f5f9; color: #1e293b; display: flex; min-height: 100vh; }
+        
+        .sidebar { width: 300px; background-color: #1e293b; color: white; padding: 40px 20px; display: flex; flex-direction: column; align-items: center; border-right: 1px solid #334155; }
+        .logo { font-size: 26px; font-weight: 800; color: #3b82f6; margin-bottom: 10px; }
+        .logo span { color: #10b981; }
+        .totem-badge { background-color: #334155; padding: 6px 16px; border-radius: 50px; font-size: 13px; color: #94a3b8; margin-bottom: 30px; font-weight: 600; }
+        .totem-img { width: 100%; max-width: 200px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); margin-bottom: 30px; }
+
+        .main-content { flex: 1; padding: 40px; overflow-y: auto; }
+        .header-dash { display: flex; justify-content: space-between; align-items: center; margin-bottom: 35px; }
+        .header-dash h1 { font-size: 28px; font-weight: 800; }
+        
+        .status-loading { font-size: 14px; color: #3b82f6; background: rgba(59, 130, 246, 0.1); padding: 8px 16px; border-radius: 20px; font-weight: 600; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 25px; margin-bottom: 35px; }
+        .stat-card { background: white; padding: 25px; border-radius: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); border: 1px solid #e2e8f0; }
+        .stat-card span { font-size: 14px; color: #64748b; font-weight: 500; display: block; margin-bottom: 8px; }
+        .stat-card strong { font-size: 30px; color: #0f172a; font-weight: 800; }
+
+        .chart-section { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); border: 1px solid #e2e8f0; margin-bottom: 35px; }
+        .chart-container { position: relative; width: 100%; height: 320px; }
+        
+        .table-section { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); border: 1px solid #e2e8f0; margin-bottom: 35px; }
+        .chart-section h3, .table-section h3 { margin-bottom: 20px; font-size: 18px; font-weight: 700; }
+
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th { background-color: #f8fafc; color: #64748b; padding: 16px; font-size: 14px; font-weight: 600; border-bottom: 2px solid #edf2f7; }
+        td { padding: 16px; border-bottom: 1px solid #edf2f7; font-size: 15px; color: #334155; }
+        tr:hover td { background-color: #f8fafc; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="logo">ABRANGE<span>BOX</span></div>
+        <div class="totem-badge">📍 Monitoramento em Tempo Real</div>
+        <img src="https://via.placeholder.com/200x350/1e293b/ffffff?text=AbrangeBox" alt="Equipamento Real" class="totem-img" id="totemImg">
+        <p style="font-size: 13px; text-align: center; color: #94a3b8; line-height: 1.4;">Dados via Google Sheets</p>
+    </div>
+
+    <div class="main-content">
+        <div class="header-dash">
+            <div>
+                <h1>Painel de Controle do Cliente</h1>
+                <p style="color: #64748b; font-size: 14px;">Atualizado automaticamente a partir do histórico de transações da máquina</p>
+            </div>
+            <div id="loadingStatus" class="status-loading">🔄 Sincronizando dados...</div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card"><span>Faturamento Líquido Aprovado</span><strong id="totalRevenue">R$ 0,00</strong></div>
+            <div class="stat-card"><span>Total de Recargas Sucesso</span><strong id="totalRefills">0</strong></div>
+            <div class="stat-card"><span>Ticket Médio Real</span><strong id="averageTicket">R$ 0,00</strong></div>
+        </div>
+
+        <div class="chart-section">
+            <h3>Evolução dos Ganhos Diários</h3>
+            <div class="chart-container">
+                <canvas id="revenueChart"></canvas>
+            </div>
+        </div>
+
+        <div class="table-section">
+            <h3>Histórico de Transações Concluídas</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID do Medidor/Pedido</th>
+                        <th>Data e Hora</th>
+                        <th>Valor (R$)</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody">
+                    <tr><td colspan="3" style="text-align:center; color:#a0aec0;">Carregando informações da nuvem...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // Link direto da planilha
+        const SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRd8pd_fR9yot-vntpcKKA0U2wb2kNKB6ZBZvHJA0bqxb0OnrO0hGe5ff2vqB7exdhL8VyDZMw-v47-/pub?gid=0&single=true&output=csv';
+
+        let myChart = null;
+
+        async function fetchSheetsData() {
+            try {
+                // ✅ CONEXÃO DIRETA CORRIGIDA: Sem passar por api.allorigins.win
+                const response = await fetch(SHEET_URL);
+                
+                if (!response.ok) throw new Error('Erro na requisição direta');
+                
+                const csvText = await response.text();
+                processData(csvText);
+                
+                document.getElementById('loadingStatus').innerHTML = '✅ Conectado ao Google Sheets';
+                document.getElementById('loadingStatus').style.color = '#10b981';
+                document.getElementById('loadingStatus').style.backgroundColor = 'rgba(16, 185, 129, 0.1)';
+            } catch (error) {
+                console.error("Erro ao puxar dados:", error);
+                document.getElementById('loadingStatus').innerHTML = '❌ Erro de Conexão (Tente Recarregar)';
+                document.getElementById('loadingStatus').style.color = '#ef4444';
+                document.getElementById('loadingStatus').style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+            }
+        }
+
+        function processData(csvText) {
+            const lines = csvText.split(/\r?\n/);
+            if (lines.length <= 1) return;
+
+            const headers = lines[0].split(/[;,]/).map(h => h.trim().replace('\r', ''));
+            
+            const timestampIdx = headers.indexOf('Timestamp');
+            const tipoIdx = headers.indexOf('Tipo');
+            const idMedidorIdx = headers.indexOf('ID_Medidor');
+            
+            let valorRsIdx = headers.indexOf('Valor_R$');
+            if (valorRsIdx === -1) {
+                valorRsIdx = headers.indexOf('Valor_RS');
+            }
+
+            let totalRevenue = 0;
+            let totalRefills = 0;
+            let dailyData = {};
+            let tableHTML = '';
+
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+                
+                const columns = lines[i].split(/[;,]/).map(c => c.trim().replace('\r', ''));
+                const tipo = columns[tipoIdx];
+                
+                if (tipo === 'CARTAO_APROVADO' || tipo === 'PIX_APROVADO') {
+                    const idMedidor = columns[idMedidorIdx] || "N/A";
+                    const timestamp = columns[timestampIdx] || "";
+                    const dateOnly = timestamp.split(' ')[0]; 
+                    
+                    let valorRaw = columns[valorRsIdx] ? columns[valorRsIdx].replace('R$', '').replace(/\s/g, '').replace(',', '.') : '0';
+                    const valor = parseFloat(valorRaw);
+
+                    if (!isNaN(valor)) {
+                        totalRevenue += valor;
+                        totalRefills++;
+                        
+                        if (dateOnly) {
+                            dailyData[dateOnly] = (dailyData[dateOnly] || 0) + valor;
+                        }
+
+                        let dateFormatted = dateOnly;
+                        if(dateOnly && dateOnly.includes('-')) {
+                            const parts = dateOnly.split('-');
+                            dateFormatted = `${parts[2]}/${parts[1]}/${parts[0]}`;
+                        }
+
+                        tableHTML += `<tr>
+                            <td><strong>${idMedidor}</strong></td>
+                            <td>${dateFormatted} ${timestamp.split(' ')[1] || ''}</td>
+                            <td style="font-weight: 600; color: #10b981;">R$ ${valor.toLocaleString('pt-BR', {minimumFractionDigits: 2})}</td>
+                        </tr>`;
+                    }
+                }
+            }
+
+            if(tableHTML === '') {
+                tableHTML = `<tr><td colspan="3" style="text-align:center; color:#a0aec0;">Nenhuma transação aprovada encontrada.</td></tr>`;
+            }
+
+            document.getElementById('totalRevenue').innerText = `R$ ${totalRevenue.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
+            document.getElementById('totalRefills').innerText = totalRefills;
+            const avg = totalRefills > 0 ? (totalRevenue / totalRefills) : 0;
+            document.getElementById('averageTicket').innerText = `R$ ${avg.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
+            document.getElementById('tableBody').innerHTML = tableHTML;
+
+            renderChart(dailyData);
+        }
+
+        function renderChart(dailyData) {
+            const sortedLabels = Object.keys(dailyData).sort();
+            const formattedLabels = sortedLabels.map(date => {
+                const p = date.split('-');
+                return p.length === 3 ? `${p[2]}/${p[1]}` : date;
+            });
+            
+            const sortedValues = sortedLabels.map(date => dailyData[date]);
+            const ctx = document.getElementById('revenueChart').getContext('2d');
+
+            if (myChart) myChart.destroy();
+
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: formattedLabels,
+                    datasets: [{
+                        label: 'Faturamento do Dia',
+                        data: sortedValues,
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.15,
+                        pointRadius: 5,
+                        pointHoverRadius: 7,
+                        pointBackgroundColor: '#3b82f6'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { 
+                        legend: { display: false }
+                    },
+                    scales: { 
+                        y: { 
+                            beginAtZero: true, 
+                            grid: { color: '#f1f5f9' },
+                            ticks: { callback: v => 'R$ ' + v } 
+                        },
+                        x: { 
+                            grid: { display: false } 
+                        }
+                    }
+                }
+            });
+        }
+
+        window.onload = fetchSheetsData;
+    </script>
+</body>
+</html>
